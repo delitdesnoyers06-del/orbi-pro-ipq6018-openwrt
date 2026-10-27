@@ -108,7 +108,8 @@ sequenceDiagram
 | stock system in slot A untouched, rollback with one `setenv` | **proven** |
 | both radios working (5 GHz HE80 + 2.4 GHz HE20) with per-unit calibration | **proven** |
 | all four GbE ports working (QCA8075 + `qca-ppe`) | **proven** |
-| LuCI, apk packages, SSH keys, 802.11k/v/r, usteer | **proven** |
+| LuCI over **http and https** (self-signed cert, needs `px5g` - gotcha 17), apk packages, SSH keys | **proven** |
+| 802.11k/v/r + usteer, two APs as one roaming domain (shared SSID/key/mobility domain) | **proven** (two units in service) |
 | booting OpenWrt *without* keeping the vendor U-Boot | **not possible** (fused secure boot verifies `0:APPSBL`) |
 | upstream `sysupgrade` flow | **not applicable** (this is a custom FIT+UBI, updated by rewriting the UBI volumes) |
 
@@ -153,6 +154,7 @@ DEV=sxr30 scripts/openwrt-set-bootcmd.sh
 
 # 7. first boot: console shell.  Then create the calibration file (see GUIDE step 7) and reboot.
 # 8. configure as dumb AP / roaming AP (see GUIDE step 8)
+# 9. smoke test: https + LuCI + both APs + stable MACs (see GUIDE step 9)
 ```
 
 ## Getting help / reporting

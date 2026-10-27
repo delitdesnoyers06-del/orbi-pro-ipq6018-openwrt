@@ -276,7 +276,37 @@ iw dev | grep -E 'ssid|channel'
 nmcli -f BSSID,SSID,CHAN,SIGNAL dev wifi list | grep <ssid>
 ```
 
-## 9. Persistence, updates and rollback
+## 9. Post-install smoke test (HTTPS, LuCI, WiFi)
+
+Run this before you declare victory, and again after every package install (the feed drifts - see
+`GOTCHAS.md` 5, 17, 18).
+
+```bash
+# --- HTTPS + LuCI -------------------------------------------------------------
+apk add px5g-mbedtls                     # without it uhttpd silently skips the TLS listener
+uci set uhttpd.main.redirect_https='0'   # keep plain http working next to https
+uci commit uhttpd; /etc/init.d/uhttpd restart
+netstat -ltn | grep -E ':80 |:443 '      # both must be there
+curl -sk -o /dev/null -w '%{http_code}\n' https://127.0.0.1/          # 200
+curl -sk -o /dev/null -w '%{http_code}\n' https://127.0.0.1/cgi-bin/luci/   # 200 or 403, never 502
+logread | grep -iE 'dlopen|symbol not found' | tail -3                # ucode ABI ok (gotcha 5C)
+
+# --- radios -------------------------------------------------------------------
+ls /sys/class/ieee80211/                                   # 2 wiphys
+for p in /sys/class/ieee80211/phy*/macaddress; do echo "$p $(cat $p)"; done
+iwinfo | grep -E 'ESSID|Access Point|Channel|Encryption'    # both APs, right channel, .../FT-PSK
+ps | grep -c '[u]steerd'
+logread | grep -iE 'hostapd.*(fail|error)' | tail -3
+
+# --- stability ----------------------------------------------------------------
+reboot    # then, after it is back: same checks - the MACs must be identical (gotcha 8)
+df -h /overlay | tail -1                                    # overlay must not be full
+```
+
+Clean up afterwards: remove `telnetd`/`utelnetd` if you started them, make sure the root password is
+set (`passwd`), and confirm SSH key auth works before you close the case on the serial console.
+
+## 10. Persistence, updates and rollback
 
 * Everything you changed lives on the overlay (`rootfs_data` in slot B): packages, `/etc/config`,
   `/lib/firmware/cal-...`.  It grows to fill the partition on first boot (49 MiB on a satellite slot,
@@ -293,7 +323,7 @@ nmcli -f BSSID,SSID,CHAN,SIGNAL dev wifi list | grep <ssid>
   from the vendor system.
 * `sysupgrade` is not usable (no vendor U-Boot replacement, custom FIT+UBI layout).
 
-## 10. If it does not boot
+## 11. If it does not boot
 
 | symptom | likely cause |
 |---|---|
@@ -304,3 +334,5 @@ nmcli -f BSSID,SSID,CHAN,SIGNAL dev wifi list | grep <ssid>
 | wifi up, but BSSID changes every boot | phy MAC randomised; set `option macaddr` (step 7.2) |
 | hostapd: `unknown configuration item 'bss_transition'` | `wpad-basic-*` installed - install `wpad-mesh-mbedtls` |
 | `bootcmd` changes do not stick | `saveenv` did not work on your unit - test it (step 4) |
+| `https://` refused, only `:80` listening | no cert: `px5g` missing - see step 9 / gotcha 17 |
+| LuCI `502 Bad Gateway`, `dlopen html.so ... symbol not found` | ucode core/plugin ABI drift - upgrade the ucode family (gotcha 5C) |
