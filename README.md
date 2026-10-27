@@ -20,6 +20,85 @@ in this folder contains data from the units used for the port.
 > `boarddata*`) the device is bricked for good.  Read `GOTCHAS.md` before you touch anything, and take
 > the full backup first.
 
+## The procedure at a glance
+
+```mermaid
+flowchart TD
+    A["UART console 115200 8N1<br/>capture the boot log"] --> B["Read the facts<br/>NAND size · secure-boot fused · U-Boot banner"]
+    B --> C["No ssh on the vendor rootfs<br/>start telnetd :2323 from the console"]
+    C --> D["Verified backup<br/>mtd0..mtd33, sha256 checked"]
+    D --> E{"does saveenv<br/>survive a reset?"}
+    E -- no --> X["stop: unattended custom boot<br/>is not possible on this unit"]
+    E -- yes --> F["Build<br/>custom DTB + FIT + UBI"]
+    F --> G["Write slot B only<br/>flash_erase + nandwrite + read-back"]
+    G --> H["saveenv<br/>bootcmd = run openwrt_boot; run stockboot"]
+    H --> I["OpenWrt userspace on the UART"]
+    I --> J["WiFi step 1: cal-ahb from this unit's 0:ART"]
+    J --> K["WiFi step 2: stable MACs via option macaddr"]
+    K --> L["Dumb AP: all ports bridged, no DHCP"]
+    L --> M["802.11k/v/r + usteer<br/>one roaming domain"]
+
+    classDef danger fill:#3b0d0d,stroke:#b3261e,color:#fff
+    classDef ok fill:#0d3b1a,stroke:#2ea043,color:#fff
+    class E,X danger
+    class M ok
+```
+
+## Why an unsigned kernel boots: the boot chain
+
+```mermaid
+flowchart TD
+    subgraph LOCK["fused secure boot - cannot be replaced"]
+        direction LR
+        P["PBL"] --> S["SBL1"] --> Q["QSEE"] --> R["RPM"]
+    end
+
+    R --> U["<b>0:APPSBL</b> - U-Boot dni1 2016.01, signed, at 0x0e00000<br/>bootcmd = a plain command list"]
+
+    U -- "run openwrt_boot" --> OB["nand set_partition_offset 0<br/>ubi part rootfs<br/>ubi read 0x44000000 kernel<br/>bootm"]
+    U -- "fallback: run stockboot" --> SB["bootdni -> secure_authenticate<br/>(the check lives here, not in silicon)"]
+
+    OB --> B["<b>slot B</b> - our UBI<br/>kernel · rootfs (squashfs) · rootfs_data"]
+    SB --> A["<b>slot A</b> - Netgear kernel + rootfs<br/>never touched"]
+
+    B --> BW["writable: kernel volume / overlay<br/>updated whenever you like"]
+    A --> AR["rollback: setenv bootcmd 'run stockboot'"]
+
+    classDef signed fill:#1f2a44,stroke:#58a6ff,color:#fff
+    classDef ours fill:#0d3b1a,stroke:#2ea043,color:#fff
+    classDef stock fill:#2b2b2b,stroke:#8b949e,color:#fff
+    class P,S,Q,R,SB signed
+    class OB,B,BW ours
+    class A,AR stock
+```
+
+The secure-boot check is **implementation, not silicon**: `bootdni` calls `secure_authenticate`, and the
+vendor's `bootcmd` is just a command list.  Replacing the *commands* (a saved environment) skips the
+check entirely - which is why the kernel in slot B never needs a Netgear signature.  The bootloader
+itself is verified by the fused chain and is left alone.
+
+## The write path (nothing else on the NAND is touched)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as workstation
+    participant V as vendor OpenWrt
+    participant U as U-Boot prompt
+    participant N as NAND slot B
+
+    W->>V: push openwrt-<dev>.ubi over telnet :2323 (base64)
+    V-->>W: sha256 matches the local image
+    W->>V: flash_erase /dev/mtd25 0 0
+    W->>V: nandwrite -p /dev/mtd25 <ubi>
+    V-->>W: read-back sha256 matches ✔
+    W->>U: setenv openwrt_boot / mtdparts / bootcmd, then saveenv
+    Note over U: reset
+    U->>N: ubi part rootfs / ubi read kernel
+    U->>U: bootm  (no signature check)
+    U-->>W: OpenWrt userspace on the UART
+```
+
 ## What is proven vs. what is not
 
 | | status |
