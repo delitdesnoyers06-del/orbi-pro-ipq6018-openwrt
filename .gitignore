@@ -1,0 +1,6 @@
+# working directories created by the toolkit (see GUIDE.md)
+work/
+dumps/
+logs/
+*.pyc
+__pycache__/
